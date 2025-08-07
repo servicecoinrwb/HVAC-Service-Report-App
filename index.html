@@ -29,6 +29,7 @@
         const areasServed = ["First Floor", "Second Floor", "Office Area", "Warehouse", "Lobby", "Conference Room", "Server Room", "Kitchen", "Whole Building", "Other"];
         const unitNumbers = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "N/A"];
         const filterSizes = ["16x20x1", "16x25x1", "20x20x1", "20x25x1", "20x20x2", "20x25x2", "24x24x2", "Custom"];
+        const beltSizes = ["AX-34", "AX-35", "AX-36", "BX-45", "BX-46", "BX-47", "4L350", "4L360", "4L370", "Custom"];
 
 
         // Helper to convert file to base64
@@ -71,10 +72,22 @@
                 newFilters[index][name] = value;
                 setEditedUnit({ ...editedUnit, filters: newFilters });
             };
+            
+            const handleBeltChange = (index, event) => {
+                const { name, value } = event.target;
+                const newBelts = [...editedUnit.belts];
+                newBelts[index][name] = value;
+                setEditedUnit({ ...editedUnit, belts: newBelts });
+            };
 
             const addFilterField = () => {
                 const newFilters = [...(editedUnit.filters || []), { size: '', quantity: '' }];
                 setEditedUnit({ ...editedUnit, filters: newFilters });
+            };
+
+            const addBeltField = () => {
+                const newBelts = [...(editedUnit.belts || []), { size: '', quantity: '' }];
+                setEditedUnit({ ...editedUnit, belts: newBelts });
             };
 
             const removeFilterField = (index) => {
@@ -82,10 +95,17 @@
                 newFilters.splice(index, 1);
                 setEditedUnit({ ...editedUnit, filters: newFilters });
             };
+            
+            const removeBeltField = (index) => {
+                const newBelts = [...editedUnit.belts];
+                newBelts.splice(index, 1);
+                setEditedUnit({ ...editedUnit, belts: newBelts });
+            };
 
             const handleSaveChanges = () => {
                 const finalFilters = editedUnit.filters ? editedUnit.filters.filter(f => f.size && f.quantity) : [];
-                onUpdate(editedUnit.id, {...editedUnit, filters: finalFilters});
+                const finalBelts = editedUnit.belts ? editedUnit.belts.filter(b => b.size && b.quantity) : [];
+                onUpdate(editedUnit.id, {...editedUnit, filters: finalFilters, belts: finalBelts});
                 setIsEditing(false);
             };
 
@@ -120,6 +140,16 @@
                                     </ul>
                                 </div>
                             )}
+                            {unit.belts && unit.belts.length > 0 && (
+                                <div className="mt-4">
+                                    <h4 className="font-semibold text-gray-700">Belts:</h4>
+                                    <ul className="list-disc list-inside">
+                                        {unit.belts.map((belt, index) => (
+                                            <li key={index}>{belt.quantity}x - {belt.size}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
                              {unit.notes && (
                                 <div className="mt-4">
                                     <h4 className="font-semibold text-gray-700">Notes:</h4>
@@ -142,7 +172,6 @@
                         <div>
                             <h3 className="text-xl font-bold text-gray-800 mb-4">Editing Unit</h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                {/* Dropdowns and Inputs for Editing */}
                                 <select name="unitNumber" value={editedUnit.unitNumber} onChange={handleInputChange} className="p-2 border rounded-md"><option value="">Unit Number</option>{unitNumbers.map(n => <option key={n} value={n}>{n}</option>)}</select>
                                 <select name="unitType" value={editedUnit.unitType} onChange={handleInputChange} className="p-2 border rounded-md"><option value="">Unit Type</option>{unitTypes.map(t => <option key={t} value={t}>{t}</option>)}</select>
                                 <select name="location" value={editedUnit.location} onChange={handleInputChange} className="p-2 border rounded-md"><option value="">Location</option>{locations.map(l => <option key={l} value={l}>{l}</option>)}</select>
@@ -167,6 +196,18 @@
                                 ))}
                                 <button onClick={addFilterField} className="text-sm text-blue-500 hover:underline">+ Add Filter</button>
                             </div>
+                             <div className="mt-4">
+                                <h4 className="font-semibold text-gray-700 mb-2">Belts</h4>
+                                {editedUnit.belts.map((belt, index) => (
+                                    <div key={index} className="flex items-center space-x-2 mb-2">
+                                        <input list="belt-sizes" name="size" value={belt.size} onChange={e => handleBeltChange(index, e)} placeholder="Belt Size" className="p-2 border rounded-md w-1/2" />
+                                        <datalist id="belt-sizes">{beltSizes.map(s => <option key={s} value={s}/>)}</datalist>
+                                        <input type="number" name="quantity" value={belt.quantity} onChange={e => handleBeltChange(index, e)} placeholder="Qty" className="p-2 border rounded-md w-1/4" />
+                                        <button onClick={() => removeBeltField(index)} className="px-3 py-2 bg-red-500 text-white rounded-md">&times;</button>
+                                    </div>
+                                ))}
+                                <button onClick={addBeltField} className="text-sm text-blue-500 hover:underline">+ Add Belt</button>
+                            </div>
                             <div className="mt-4"><h4 className="font-semibold text-gray-700 mb-2">Notes</h4><textarea name="notes" value={editedUnit.notes} onChange={handleInputChange} placeholder="Service notes..." className="p-2 border rounded-md w-full h-24"></textarea></div>
                             <div className="mt-4 grid grid-cols-2 gap-2"><button onClick={() => fileInputRef.current.click()} className="w-full px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition">Upload Pictures</button><button onClick={() => cameraInputRef.current.click()} className="w-full px-4 py-2 bg-blue-200 text-blue-800 rounded-md hover:bg-blue-300 transition">Open Camera</button><input type="file" multiple accept="image/*" ref={fileInputRef} className="hidden" onChange={handleImageUpload} /><input type="file" accept="image/*" capture="environment" ref={cameraInputRef} className="hidden" onChange={handleImageUpload} /></div>
                             <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">{editedUnit.images.map((image, index) => (<div key={index} className="relative"><img src={image} alt={`Unit ${index + 1}`} className="rounded-md object-cover w-full h-32" /><button onClick={() => handleRemoveImage(index)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 text-xs">&times;</button></div>))}</div>
@@ -189,6 +230,7 @@
             const [notes, setNotes] = useState('');
             const [images, setImages] = useState([]);
             const [filters, setFilters] = useState([{ size: '', quantity: '' }]);
+            const [belts, setBelts] = useState([{ size: '', quantity: '' }]);
             const [driveType, setDriveType] = useState('belt');
             const [economizer, setEconomizer] = useState('no');
             const fileInputRef = useRef(null);
@@ -208,14 +250,31 @@
                 setFilters(newFilters);
             };
 
+            const handleBeltChange = (index, event) => {
+                const { name, value } = event.target;
+                const newBelts = [...belts];
+                newBelts[index][name] = value;
+                setBelts(newBelts);
+            };
+
             const addFilterField = () => {
                 setFilters([...filters, { size: '', quantity: '' }]);
+            };
+            
+            const addBeltField = () => {
+                setBelts([...belts, { size: '', quantity: '' }]);
             };
 
             const removeFilterField = (index) => {
                 const newFilters = [...filters];
                 newFilters.splice(index, 1);
                 setFilters(newFilters);
+            };
+            
+            const removeBeltField = (index) => {
+                const newBelts = [...belts];
+                newBelts.splice(index, 1);
+                setBelts(newBelts);
             };
 
             const handleSubmit = (e) => {
@@ -225,8 +284,9 @@
                     return;
                 }
                 const finalFilters = filters.filter(f => f.size && f.quantity);
-                onAddUnit({ id: Date.now(), unitNumber, unitType, location, areaServed, make, modelNumber, serialNumber, images, filters: finalFilters, driveType, economizer: economizer === 'yes', notes });
-                setUnitNumber(''); setUnitType(''); setLocation(''); setAreaServed(''); setMake(''); setModelNumber(''); setSerialNumber(''); setNotes(''); setImages([]); setFilters([{ size: '', quantity: '' }]); setDriveType('belt'); setEconomizer('no');
+                const finalBelts = belts.filter(b => b.size && b.quantity);
+                onAddUnit({ id: Date.now(), unitNumber, unitType, location, areaServed, make, modelNumber, serialNumber, images, filters: finalFilters, belts: finalBelts, driveType, economizer: economizer === 'yes', notes });
+                setUnitNumber(''); setUnitType(''); setLocation(''); setAreaServed(''); setMake(''); setModelNumber(''); setSerialNumber(''); setNotes(''); setImages([]); setFilters([{ size: '', quantity: '' }]); setBelts([{ size: '', quantity: '' }]); setDriveType('belt'); setEconomizer('no');
             };
             
             const handleRemoveImage = (index) => {
@@ -263,6 +323,18 @@
                             <datalist id="filter-sizes">{filterSizes.map(s => <option key={s} value={s}/>)}</datalist>
                             <button type="button" onClick={addFilterField} className="mt-1 text-sm text-blue-600 hover:underline">+ Add another filter size</button>
                         </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Belts</label>
+                            {belts.map((belt, index) => (
+                                <div key={index} className="flex items-center space-x-2 mb-2">
+                                    <input list="belt-sizes" name="size" value={belt.size} onChange={e => handleBeltChange(index, e)} placeholder="Belt Size (e.g., AX-34)" className="p-3 border rounded-lg w-full md:w-1/2" />
+                                    <input type="number" name="quantity" value={belt.quantity} onChange={e => handleBeltChange(index, e)} placeholder="Qty" className="p-3 border rounded-lg w-full md:w-1/4" />
+                                    <button type="button" onClick={() => removeBeltField(index)} className="px-3 py-2 bg-red-200 text-red-800 rounded-lg hover:bg-red-300">-</button>
+                                </div>
+                            ))}
+                            <datalist id="belt-sizes">{beltSizes.map(s => <option key={s} value={s}/>)}</datalist>
+                            <button type="button" onClick={addBeltField} className="mt-1 text-sm text-blue-600 hover:underline">+ Add another belt size</button>
+                        </div>
                         <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => fileInputRef.current.click()} className="w-full px-4 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition">Upload Pictures</button><button type="button" onClick={() => cameraInputRef.current.click()} className="w-full px-4 py-3 bg-blue-200 text-blue-800 rounded-lg hover:bg-blue-300 transition">Open Camera</button><input type="file" multiple accept="image/*" ref={fileInputRef} className="hidden" onChange={handleImageUpload} /><input type="file" accept="image/*" capture="environment" ref={cameraInputRef} className="hidden" onChange={handleImageUpload} /></div>
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">{images.map((image, index) => (<div key={index} className="relative"><img src={image} alt={`upload-preview ${index}`} className="rounded-md object-cover w-full h-32" /><button type="button" onClick={() => handleRemoveImage(index)} className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 text-xs leading-none">&times;</button></div>))}</div>
                         <button type="submit" className="w-full py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700">Add Unit</button>
@@ -291,6 +363,7 @@
                                     <div><strong className="font-semibold">Economizer:</strong> {unit.economizer ? 'Yes' : 'No'}</div>
                                 </div>
                                 {unit.filters && unit.filters.length > 0 && (<div className="mt-4"><h4 className="font-semibold text-gray-700">Filters:</h4><ul className="list-disc list-inside">{unit.filters.map((filter, index) => (<li key={index}>{filter.quantity}x - {filter.size}</li>))}</ul></div>)}
+                                {unit.belts && unit.belts.length > 0 && (<div className="mt-4"><h4 className="font-semibold text-gray-700">Belts:</h4><ul className="list-disc list-inside">{unit.belts.map((belt, index) => (<li key={index}>{belt.quantity}x - {belt.size}</li>))}</ul></div>)}
                                 {unit.notes && (<div className="mt-4"><h4 className="text-xl font-semibold mt-4 mb-2 text-gray-700">Notes:</h4><p className="text-gray-600 whitespace-pre-wrap p-2 bg-gray-50 rounded">{unit.notes}</p></div>)}
                                 <h4 className="text-xl font-semibold mt-6 mb-4 text-gray-700">Maintenance Photos</h4>
                                 <div className="grid grid-cols-2 gap-4">{unit.images.map((image, index) => (<div key={index} className="break-inside-avoid"><img src={image} alt={`Unit ${unit.location} - ${index + 1}`} className="rounded-lg shadow-md w-full" /></div>))}</div>
