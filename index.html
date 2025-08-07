@@ -20,16 +20,30 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useRef } = React;
+        const { useState, useRef, useEffect } = React;
 
         // --- Predefined Options for Dropdowns ---
         const hvacMakes = ["Carrier", "Goodman", "Trane", "Lennox", "York", "Rheem", "Ruud", "Amana", "Bryant", "Heil", "Payne", "Daikin", "Other"];
-        const unitTypes = ["Rooftop Unit (RTU)", "Air Handling Unit (AHU)", "Split System", "Furnace", "Boiler", "Heat Pump", "Ductless Mini-Split", "Other"];
+        const unitTypes = ["Rooftop Unit (RTU)", "Air Handling Unit (AHU)", "Split System", "Furnace", "Boiler", "Heat Pump", "Ductless Mini-Split", "EF Exhaust Fan", "VAV Variable Air Volume", "Other"];
         const locations = ["Rooftop", "Basement", "Mechanical Room", "Closet", "Attic", "Exterior Wall", "Crawlspace", "Other"];
         const areasServed = ["First Floor", "Second Floor", "Office Area", "Warehouse", "Lobby", "Conference Room", "Server Room", "Kitchen", "Whole Building", "Other"];
         const unitNumbers = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "N/A"];
         const filterSizes = ["16x20x1", "16x25x1", "20x20x1", "20x25x1", "20x20x2", "20x25x2", "24x24x2", "Custom"];
         const beltSizes = ["AX-34", "AX-35", "AX-36", "BX-45", "BX-46", "BX-47", "4L350", "4L360", "4L370", "Custom"];
+        const punchListItems = [
+            "Fill out HVAC Survery Sheet In Full: Make, Model, Serial, Age, Tonnage, Area Served, and Condition",
+            "Replace air filters",
+            "Clean condensate drain",
+            "Lubricate blower shaft bearings",
+            "Inspect belts",
+            "Check refrigerant charge",
+            "Check program and thermostat operation",
+            "Check evaporator and condenser coils",
+            "Inspect blower motor mounts",
+            "Lubricate blower motor bearings",
+            "Lubricate evaporator / fan motor",
+            "Test high/low pressure control operation"
+        ];
 
 
         // Helper to convert file to base64
@@ -60,6 +74,16 @@
             const handleInputChange = (e) => {
                 const { name, value } = e.target;
                 setEditedUnit({ ...editedUnit, [name]: value });
+            };
+            
+            const handlePunchListChange = (item) => {
+                setEditedUnit(prev => ({
+                    ...prev,
+                    punchList: {
+                        ...prev.punchList,
+                        [item]: !prev.punchList[item]
+                    }
+                }));
             };
 
             const handleEconomizerChange = (e) => {
@@ -150,6 +174,16 @@
                                     </ul>
                                 </div>
                             )}
+                            {unit.punchList && (
+                                <div className="mt-4">
+                                    <h4 className="font-semibold text-gray-700">Punch List:</h4>
+                                    <ul className="list-disc list-inside">
+                                        {punchListItems.map((item, index) => (
+                                            unit.punchList[item] && <li key={index}>{item}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
                              {unit.notes && (
                                 <div className="mt-4">
                                     <h4 className="font-semibold text-gray-700">Notes:</h4>
@@ -208,6 +242,17 @@
                                 ))}
                                 <button onClick={addBeltField} className="text-sm text-blue-500 hover:underline">+ Add Belt</button>
                             </div>
+                            <div className="mt-4">
+                                <h4 className="font-semibold text-gray-700 mb-2">Punch List</h4>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {punchListItems.map((item, index) => (
+                                        <label key={index} className="flex items-center space-x-2">
+                                            <input type="checkbox" checked={!!editedUnit.punchList[item]} onChange={() => handlePunchListChange(item)} />
+                                            <span>{item}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
                             <div className="mt-4"><h4 className="font-semibold text-gray-700 mb-2">Notes</h4><textarea name="notes" value={editedUnit.notes} onChange={handleInputChange} placeholder="Service notes..." className="p-2 border rounded-md w-full h-24"></textarea></div>
                             <div className="mt-4 grid grid-cols-2 gap-2"><button onClick={() => fileInputRef.current.click()} className="w-full px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition">Upload Pictures</button><button onClick={() => cameraInputRef.current.click()} className="w-full px-4 py-2 bg-blue-200 text-blue-800 rounded-md hover:bg-blue-300 transition">Open Camera</button><input type="file" multiple accept="image/*" ref={fileInputRef} className="hidden" onChange={handleImageUpload} /><input type="file" accept="image/*" capture="environment" ref={cameraInputRef} className="hidden" onChange={handleImageUpload} /></div>
                             <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">{editedUnit.images.map((image, index) => (<div key={index} className="relative"><img src={image} alt={`Unit ${index + 1}`} className="rounded-md object-cover w-full h-32" /><button onClick={() => handleRemoveImage(index)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 text-xs">&times;</button></div>))}</div>
@@ -231,6 +276,7 @@
             const [images, setImages] = useState([]);
             const [filters, setFilters] = useState([{ size: '', quantity: '' }]);
             const [belts, setBelts] = useState([{ size: '', quantity: '' }]);
+            const [punchList, setPunchList] = useState(() => punchListItems.reduce((acc, item) => ({...acc, [item]: false }), {}));
             const [driveType, setDriveType] = useState('belt');
             const [economizer, setEconomizer] = useState('no');
             const fileInputRef = useRef(null);
@@ -255,6 +301,10 @@
                 const newBelts = [...belts];
                 newBelts[index][name] = value;
                 setBelts(newBelts);
+            };
+
+            const handlePunchListChange = (item) => {
+                setPunchList(prev => ({ ...prev, [item]: !prev[item] }));
             };
 
             const addFilterField = () => {
@@ -285,8 +335,8 @@
                 }
                 const finalFilters = filters.filter(f => f.size && f.quantity);
                 const finalBelts = belts.filter(b => b.size && b.quantity);
-                onAddUnit({ id: Date.now(), unitNumber, unitType, location, areaServed, make, modelNumber, serialNumber, images, filters: finalFilters, belts: finalBelts, driveType, economizer: economizer === 'yes', notes });
-                setUnitNumber(''); setUnitType(''); setLocation(''); setAreaServed(''); setMake(''); setModelNumber(''); setSerialNumber(''); setNotes(''); setImages([]); setFilters([{ size: '', quantity: '' }]); setBelts([{ size: '', quantity: '' }]); setDriveType('belt'); setEconomizer('no');
+                onAddUnit({ id: Date.now(), unitNumber, unitType, location, areaServed, make, modelNumber, serialNumber, images, filters: finalFilters, belts: finalBelts, driveType, economizer: economizer === 'yes', notes, punchList });
+                setUnitNumber(''); setUnitType(''); setLocation(''); setAreaServed(''); setMake(''); setModelNumber(''); setSerialNumber(''); setNotes(''); setImages([]); setFilters([{ size: '', quantity: '' }]); setBelts([{ size: '', quantity: '' }]); setDriveType('belt'); setEconomizer('no'); setPunchList(punchListItems.reduce((acc, item) => ({...acc, [item]: false }), {}));
             };
             
             const handleRemoveImage = (index) => {
@@ -335,6 +385,17 @@
                             <datalist id="belt-sizes">{beltSizes.map(s => <option key={s} value={s}/>)}</datalist>
                             <button type="button" onClick={addBeltField} className="mt-1 text-sm text-blue-600 hover:underline">+ Add another belt size</button>
                         </div>
+                         <div>
+                            <label className="block text-lg font-medium text-gray-700 mb-2">Punch List</label>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+                                {punchListItems.map((item, index) => (
+                                    <label key={index} className="flex items-center space-x-3">
+                                        <input type="checkbox" checked={punchList[item]} onChange={() => handlePunchListChange(item)} className="h-4 w-4"/>
+                                        <span className="text-gray-700">{item}</span>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
                         <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => fileInputRef.current.click()} className="w-full px-4 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition">Upload Pictures</button><button type="button" onClick={() => cameraInputRef.current.click()} className="w-full px-4 py-3 bg-blue-200 text-blue-800 rounded-lg hover:bg-blue-300 transition">Open Camera</button><input type="file" multiple accept="image/*" ref={fileInputRef} className="hidden" onChange={handleImageUpload} /><input type="file" accept="image/*" capture="environment" ref={cameraInputRef} className="hidden" onChange={handleImageUpload} /></div>
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">{images.map((image, index) => (<div key={index} className="relative"><img src={image} alt={`upload-preview ${index}`} className="rounded-md object-cover w-full h-32" /><button type="button" onClick={() => handleRemoveImage(index)} className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 text-xs leading-none">&times;</button></div>))}</div>
                         <button type="submit" className="w-full py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700">Add Unit</button>
@@ -364,6 +425,16 @@
                                 </div>
                                 {unit.filters && unit.filters.length > 0 && (<div className="mt-4"><h4 className="font-semibold text-gray-700">Filters:</h4><ul className="list-disc list-inside">{unit.filters.map((filter, index) => (<li key={index}>{filter.quantity}x - {filter.size}</li>))}</ul></div>)}
                                 {unit.belts && unit.belts.length > 0 && (<div className="mt-4"><h4 className="font-semibold text-gray-700">Belts:</h4><ul className="list-disc list-inside">{unit.belts.map((belt, index) => (<li key={index}>{belt.quantity}x - {belt.size}</li>))}</ul></div>)}
+                                {unit.punchList && (
+                                    <div className="mt-4">
+                                        <h4 className="text-xl font-semibold mt-4 mb-2 text-gray-700">Punch List Completed:</h4>
+                                        <ul className="list-disc list-inside">
+                                            {punchListItems.map((item, index) => (
+                                                unit.punchList[item] && <li key={index}>{item}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                )}
                                 {unit.notes && (<div className="mt-4"><h4 className="text-xl font-semibold mt-4 mb-2 text-gray-700">Notes:</h4><p className="text-gray-600 whitespace-pre-wrap p-2 bg-gray-50 rounded">{unit.notes}</p></div>)}
                                 <h4 className="text-xl font-semibold mt-6 mb-4 text-gray-700">Maintenance Photos</h4>
                                 <div className="grid grid-cols-2 gap-4">{unit.images.map((image, index) => (<div key={index} className="break-inside-avoid"><img src={image} alt={`Unit ${unit.location} - ${index + 1}`} className="rounded-lg shadow-md w-full" /></div>))}</div>
