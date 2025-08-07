@@ -86,6 +86,15 @@
                 }));
             };
 
+            const handleToggleAllPunchList = () => {
+                const allChecked = punchListItems.every(item => editedUnit.punchList[item]);
+                const newPunchList = {};
+                punchListItems.forEach(item => {
+                    newPunchList[item] = !allChecked;
+                });
+                setEditedUnit(prev => ({ ...prev, punchList: newPunchList }));
+            };
+
             const handleEconomizerChange = (e) => {
                 setEditedUnit({ ...editedUnit, economizer: e.target.value === 'yes' });
             };
@@ -221,7 +230,12 @@
                                 <button onClick={addBeltField} className="text-sm text-blue-500 hover:underline">+ Add Belt</button>
                             </div>
                             <div className="mt-4">
-                                <h4 className="font-semibold text-gray-700 mb-2">Punch List</h4>
+                                <div className="flex justify-between items-center mb-2">
+                                    <h4 className="font-semibold text-gray-700">Punch List</h4>
+                                    <button type="button" onClick={handleToggleAllPunchList} className="text-sm text-blue-500 hover:underline">
+                                        {punchListItems.every(item => editedUnit.punchList[item]) ? 'Uncheck All' : 'Check All'}
+                                    </button>
+                                </div>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                     {punchListItems.map((item, index) => (
                                         <label key={index} className="flex items-center space-x-2">
@@ -283,6 +297,15 @@
 
             const handlePunchListChange = (item) => {
                 setPunchList(prev => ({ ...prev, [item]: !prev[item] }));
+            };
+
+            const handleToggleAllPunchList = () => {
+                const allChecked = punchListItems.every(item => punchList[item]);
+                const newPunchList = {};
+                punchListItems.forEach(item => {
+                    newPunchList[item] = !allChecked;
+                });
+                setPunchList(newPunchList);
             };
 
             const addFilterField = () => {
@@ -364,7 +387,12 @@
                             <button type="button" onClick={addBeltField} className="mt-1 text-sm text-blue-600 hover:underline">+ Add another belt size</button>
                         </div>
                          <div>
-                            <label className="block text-lg font-medium text-gray-700 mb-2">Punch List</label>
+                            <div className="flex justify-between items-center mb-2">
+                                <label className="block text-lg font-medium text-gray-700">Punch List</label>
+                                <button type="button" onClick={handleToggleAllPunchList} className="text-sm text-blue-600 hover:underline">
+                                    {punchListItems.every(item => punchList[item]) ? 'Uncheck All' : 'Check All'}
+                                </button>
+                            </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
                                 {punchListItems.map((item, index) => (
                                     <label key={index} className="flex items-center space-x-3">
@@ -388,11 +416,12 @@
                 <div id="service-report" className="p-8 bg-white font-sans" style={{width: '210mm'}}>
                     <header className="flex justify-between items-start pb-4 border-b-2 border-blue-800">
                         <div>
-                            <h1 className="text-4xl font-extrabold text-blue-800">HVAC Service Report</h1>
-                            <p className="text-md text-gray-600 mt-1">Your Company Name | (555) 123-4567 | your@email.com</p>
+                           <img src="https://images.squarespace-cdn.com/content/v1/64b8ce7983e67906ccb6616f/5b6094f5-caee-47d6-8b5e-9b762773f4c0/white_logo_transparent_background.png?format=2500w" alt="Company Logo" className="h-20" />
+                            <p className="text-md text-gray-600 mt-2">23093 Telegraph Rd, Southfield, MI 48033</p>
                         </div>
                         <div className="text-right">
-                            <p className="font-bold text-gray-700">Date: <span className="font-normal">{new Date().toLocaleDateString()}</span></p>
+                            <h1 className="text-4xl font-extrabold text-blue-800">Service Report</h1>
+                            <p className="font-bold text-gray-700 mt-2">Date: <span className="font-normal">{new Date().toLocaleDateString()}</span></p>
                             <p className="font-bold text-gray-700">Work Order #: <span className="font-normal">{clientInfo.workOrderNumber || 'N/A'}</span></p>
                         </div>
                     </header>
@@ -437,6 +466,7 @@
                             <div className="text-left"><p className="font-semibold">Signature:</p><div className="border-b mt-8"></div></div>
                         </div>
                         <p className="text-sm text-gray-500 mt-8">Thank you for your business.</p>
+                        <a href="https://service.money/" target="_blank" className="text-sm text-blue-600 hover:underline">Powered by Service Coin</a>
                     </footer>
                 </div>
             );
@@ -457,7 +487,7 @@
                     setTimeout(() => {
                         const input = document.getElementById('service-report');
                         const { jsPDF } = window.jspdf;
-                        html2canvas(input, { scale: 2, useCORS: true }).then(canvas => {
+                        html2canvas(input, { scale: 2, useCORS: true, allowTaint: true }).then(canvas => {
                             const imgData = canvas.toDataURL('image/png');
                             const pdf = new jsPDF('p', 'mm', 'a4');
                             const pdfWidth = pdf.internal.pageSize.getWidth();
