@@ -348,6 +348,7 @@ export default function App() {
     const generatePdf = () => {
         setIsGeneratingPdf(true);
         const input = document.getElementById('service-report');
+        
         // Access html2canvas and jsPDF from the window object
         const html2canvas = window.html2canvas;
         const { jsPDF } = window.jspdf;
