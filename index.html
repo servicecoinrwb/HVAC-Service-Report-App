@@ -25,17 +25,15 @@
     <script type="text/babel">
         const { useState, useRef, useEffect } = React;
 
-        // --- Firebase Configuration ---
+        // Firebase Configuration - REPLACE WITH YOUR CONFIG
         const firebaseConfig = {
-            apiKey: import.meta.env.VITE_API_KEY,
-            authDomain: import.meta.env.VITE_AUTH_DOMAIN,
-            projectId: import.meta.env.VITE_PROJECT_ID,
-            storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
-            messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
-            appId: import.meta.env.VITE_APP_ID
+            apiKey: "your-api-key",
+            authDomain: "your-project.firebaseapp.com", 
+            projectId: "your-project-id",
+            storageBucket: "your-project.appspot.com",
+            messagingSenderId: "123456789",
+            appId: "your-app-id"
         };
-
-        const appId = 'hvac-finance-dashboard';
 
         // Initialize Firebase (v8 syntax)
         let db, auth;
