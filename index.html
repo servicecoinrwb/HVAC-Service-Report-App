@@ -9,10 +9,10 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- Firebase -->
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <!-- Firebase v8 (better compatibility) -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
     
     <!-- PDF Generation -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -25,24 +25,26 @@
     <script type="text/babel">
         const { useState, useRef, useEffect } = React;
 
-        // --- Firebase Configuration ---
+        // Firebase Configuration - REPLACE WITH YOUR CONFIG
         const firebaseConfig = {
-            apiKey: import.meta.env.VITE_API_KEY,
-            authDomain: import.meta.env.VITE_AUTH_DOMAIN,
-            projectId: import.meta.env.VITE_PROJECT_ID,
-            storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
-            messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
-            appId: import.meta.env.VITE_APP_ID
+            apiKey: "your-api-key",
+            authDomain: "your-project.firebaseapp.com", 
+            projectId: "your-project-id",
+            storageBucket: "your-project.appspot.com",
+            messagingSenderId: "123456789",
+            appId: "your-app-id"
         };
 
-        const appId = 'hvac-finance-dashboard';
-
-        // Initialize Firebase
-        let app, db, auth;
+        // Initialize Firebase (v8 syntax)
+        let db, auth;
         try {
-            app = firebase.initializeApp(firebaseConfig);
-            db = firebase.firestore();
-            auth = firebase.auth();
+            if (firebaseConfig.apiKey !== "your-api-key") {
+                firebase.initializeApp(firebaseConfig);
+                db = firebase.firestore();
+                auth = firebase.auth();
+            } else {
+                console.warn('Firebase not configured - demo mode only');
+            }
         } catch (error) {
             console.error('Firebase initialization failed:', error);
         }
@@ -87,7 +89,7 @@
                 try {
                     if (!db) return [];
                     const tech = DataService.getCurrentTechnician();
-                    if (!tech.id || !COMPANY_ID) return [];
+                    if (!tech.id || !COMPANY_ID || COMPANY_ID === 'your-company-id') return [];
                     
                     const snapshot = await db.collection('users').doc(COMPANY_ID).collection('workOrders')
                         .where('technician', 'array-contains', tech.id)
@@ -109,7 +111,9 @@
                 try {
                     if (!db) throw new Error('Firebase not initialized');
                     const tech = DataService.getCurrentTechnician();
-                    if (!tech.id || !COMPANY_ID) throw new Error('No valid technician or company ID');
+                    if (!tech.id || !COMPANY_ID || COMPANY_ID === 'your-company-id') {
+                        throw new Error('No valid technician or company ID');
+                    }
                     
                     const reportData = {
                         technicianId: tech.id,
@@ -194,14 +198,14 @@
                     const userCredential = await auth.signInWithEmailAndPassword(email, password);
                     const user = userCredential.user;
                     
-                    if (!COMPANY_ID) {
+                    if (!COMPANY_ID || COMPANY_ID === 'your-company-id') {
                         throw new Error('Company ID not configured');
                     }
                     
-                    // Check if user is a technician
+                    // Check if user is a technician (v8 syntax)
                     const techDoc = await db.collection('users').doc(COMPANY_ID).collection('technicians').doc(user.uid).get();
                     
-                    if (techDoc.exists()) {
+                    if (techDoc.exists) {
                         const techData = techDoc.data();
                         localStorage.setItem('currentTechnician', JSON.stringify({
                             id: user.uid,
