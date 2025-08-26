@@ -25,7 +25,7 @@
     <script type="text/babel">
         const { useState, useRef, useEffect } = React;
 
-        // Firebase Configuration - REPLACE WITH YOUR CONFIG
+        // Firebase Configuration - YOUR ACTUAL CONFIG IS CORRECTLY SET
         const firebaseConfig = {
             apiKey: "AIzaSyAlev0GFpv3rzRYCJaMALOqlPwaowNfynI",
             authDomain: "hvac-finance-dashboard.firebaseapp.com", 
@@ -38,19 +38,16 @@
         // Initialize Firebase (v8 syntax)
         let db, auth;
         try {
-            if (firebaseConfig.apiKey !== "your-api-key") {
-                firebase.initializeApp(firebaseConfig);
-                db = firebase.firestore();
-                auth = firebase.auth();
-            } else {
-                console.warn('Firebase not configured - demo mode only');
-            }
+            firebase.initializeApp(firebaseConfig);
+            db = firebase.firestore();
+            auth = firebase.auth();
+            console.log('Firebase initialized successfully');
         } catch (error) {
             console.error('Firebase initialization failed:', error);
         }
 
-        // Company ID - REPLACE WITH YOUR ACTUAL COMPANY ID
-        const COMPANY_ID = 'your-company-id';
+        // Company ID - REPLACE WITH YOUR FIREBASE AUTH UID
+        const COMPANY_ID = 'uZAcGdtGAJYr2gZHh8JWicKfJO72';
 
         // --- PREDEFINED OPTIONS (kept from original) ---
         const hvacMakes = ["Carrier", "Goodman", "Trane", "Lennox", "York", "Rheem", "Ruud", "Amana", "Bryant", "Heil", "Payne", "Daikin", "Other"];
