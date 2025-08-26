@@ -3,15 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HVAC Service Report</title>
-    <!-- Tailwind CSS -->
+    <title>HVAC Service Report - Integrated</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- React Libraries -->
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <!-- Babel to compile JSX in the browser -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- PDF Generation Libraries -->
+    
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    
+    <!-- PDF Generation -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 </head>
@@ -22,7 +25,32 @@
     <script type="text/babel">
         const { useState, useRef, useEffect } = React;
 
-        // --- Predefined Options for Dropdowns ---
+        // --- Firebase Configuration ---
+        const firebaseConfig = {
+            apiKey: import.meta.env.VITE_API_KEY,
+            authDomain: import.meta.env.VITE_AUTH_DOMAIN,
+            projectId: import.meta.env.VITE_PROJECT_ID,
+            storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
+            messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
+            appId: import.meta.env.VITE_APP_ID
+        };
+
+        const appId = 'hvac-finance-dashboard';
+
+        // Initialize Firebase
+        let app, db, auth;
+        try {
+            app = firebase.initializeApp(firebaseConfig);
+            db = firebase.firestore();
+            auth = firebase.auth();
+        } catch (error) {
+            console.error('Firebase initialization failed:', error);
+        }
+
+        // Company ID - REPLACE WITH YOUR ACTUAL COMPANY ID
+        const COMPANY_ID = 'your-company-id';
+
+        // --- PREDEFINED OPTIONS (kept from original) ---
         const hvacMakes = ["Carrier", "Goodman", "Trane", "Lennox", "York", "Rheem", "Ruud", "Amana", "Bryant", "Heil", "Payne", "Daikin", "Other"];
         const unitTypes = ["Rooftop Unit (RTU)", "Air Handling Unit (AHU)", "Split System", "Furnace", "Boiler", "Heat Pump", "Ductless Mini-Split", "EF Exhaust Fan", "VAV Variable Air Volume", "Other"];
         const locations = ["Rooftop", "Basement", "Mechanical Room", "Closet", "Attic", "Exterior Wall", "Crawlspace", "Other"];
@@ -45,6 +73,97 @@
             "Test high/low pressure control operation"
         ];
 
+        // --- DATA SERVICE ---
+        const DataService = {
+            getCurrentTechnician: () => {
+                try {
+                    return JSON.parse(localStorage.getItem('currentTechnician') || '{}');
+                } catch {
+                    return {};
+                }
+            },
+            
+            loadAssignedWorkOrders: async () => {
+                try {
+                    if (!db) return [];
+                    const tech = DataService.getCurrentTechnician();
+                    if (!tech.id || !COMPANY_ID) return [];
+                    
+                    const snapshot = await db.collection('users').doc(COMPANY_ID).collection('workOrders')
+                        .where('technician', 'array-contains', tech.id)
+                        .where('Order Status', 'in', ['Open', 'Scheduled', 'In Progress'])
+                        .get();
+                    
+                    const workOrders = [];
+                    snapshot.forEach(doc => {
+                        workOrders.push({ id: doc.id, ...doc.data() });
+                    });
+                    return workOrders;
+                } catch (error) {
+                    console.error('Error loading work orders:', error);
+                    return [];
+                }
+            },
+
+            syncServiceReport: async (units, clientInfo, workOrderId = null) => {
+                try {
+                    if (!db) throw new Error('Firebase not initialized');
+                    const tech = DataService.getCurrentTechnician();
+                    if (!tech.id || !COMPANY_ID) throw new Error('No valid technician or company ID');
+                    
+                    const reportData = {
+                        technicianId: tech.id,
+                        technicianName: tech.name,
+                        clientInfo,
+                        units,
+                        completedAt: new Date().toISOString(),
+                        workOrderId,
+                        status: 'completed'
+                    };
+                    
+                    const reportRef = await db.collection('users').doc(COMPANY_ID).collection('serviceReports').add(reportData);
+                    
+                    if (workOrderId) {
+                        await db.collection('users').doc(COMPANY_ID).collection('workOrders').doc(workOrderId).update({
+                            'Order Status': 'Completed',
+                            'Completion Date': new Date().toISOString(),
+                            serviceReportId: reportRef.id,
+                            lastUpdated: new Date().toISOString()
+                        });
+                    }
+                    
+                    return reportRef.id;
+                } catch (error) {
+                    console.error('Sync failed:', error);
+                    // Store for offline sync
+                    const pendingReports = JSON.parse(localStorage.getItem('pendingReports') || '[]');
+                    pendingReports.push({ units, clientInfo, workOrderId, timestamp: Date.now() });
+                    localStorage.setItem('pendingReports', JSON.stringify(pendingReports));
+                    throw error;
+                }
+            },
+
+            retryPendingSync: async () => {
+                const pendingReports = JSON.parse(localStorage.getItem('pendingReports') || '[]');
+                if (pendingReports.length === 0) return 0;
+                
+                let syncedCount = 0;
+                const failedReports = [];
+                
+                for (const report of pendingReports) {
+                    try {
+                        await DataService.syncServiceReport(report.units, report.clientInfo, report.workOrderId);
+                        syncedCount++;
+                    } catch (error) {
+                        console.error('Retry sync failed for report:', error);
+                        failedReports.push(report);
+                    }
+                }
+                
+                localStorage.setItem('pendingReports', JSON.stringify(failedReports));
+                return syncedCount;
+            }
+        };
 
         // Helper to convert file to base64
         const toBase64 = file => new Promise((resolve, reject) => {
@@ -54,13 +173,473 @@
             reader.onerror = error => reject(error);
         });
 
-        // UnitCard Component
+        // --- LOGIN COMPONENT ---
+        const LoginForm = ({ onLogin }) => {
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+
+            const handleLogin = async (e) => {
+                e.preventDefault();
+                if (!auth) {
+                    setError('Firebase authentication not available. Check your configuration.');
+                    return;
+                }
+                
+                setLoading(true);
+                setError('');
+                
+                try {
+                    const userCredential = await auth.signInWithEmailAndPassword(email, password);
+                    const user = userCredential.user;
+                    
+                    if (!COMPANY_ID) {
+                        throw new Error('Company ID not configured');
+                    }
+                    
+                    // Check if user is a technician
+                    const techDoc = await db.collection('users').doc(COMPANY_ID).collection('technicians').doc(user.uid).get();
+                    
+                    if (techDoc.exists()) {
+                        const techData = techDoc.data();
+                        localStorage.setItem('currentTechnician', JSON.stringify({
+                            id: user.uid,
+                            name: techData.name,
+                            email: techData.email,
+                            companyId: COMPANY_ID
+                        }));
+                        onLogin(techData);
+                    } else {
+                        throw new Error('Access denied - technician account required');
+                    }
+                } catch (error) {
+                    setError(error.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                    <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-lg shadow">
+                        <div>
+                            <h2 className="text-center text-3xl font-bold text-gray-900">Technician Login</h2>
+                            <p className="text-center text-sm text-gray-600 mt-2">HVAC Service Reporter</p>
+                        </div>
+                        <form onSubmit={handleLogin} className="mt-8 space-y-6">
+                            <input
+                                type="email"
+                                required
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                placeholder="Email address"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:border-blue-500"
+                            />
+                            <input
+                                type="password"
+                                required
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                placeholder="Password"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:border-blue-500"
+                            />
+                            {error && <div className="text-red-600 text-sm">{error}</div>}
+                            <button
+                                type="submit"
+                                disabled={loading}
+                                className="w-full py-2 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400"
+                            >
+                                {loading ? 'Signing in...' : 'Sign In'}
+                            </button>
+                        </form>
+                        <div className="text-center">
+                            <button
+                                onClick={() => onLogin({ name: 'Demo User', email: 'demo@example.com' })}
+                                className="text-blue-600 hover:text-blue-800 text-sm"
+                            >
+                                Continue without login (Demo Mode)
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- WORK ORDER SELECTOR ---
+        const WorkOrderSelector = ({ selectedWorkOrder, onSelectWorkOrder, onClearSelection }) => {
+            const [loading, setLoading] = useState(true);
+            const [orders, setOrders] = useState([]);
+            const [error, setError] = useState('');
+
+            useEffect(() => {
+                const loadOrders = async () => {
+                    setLoading(true);
+                    setError('');
+                    try {
+                        const loadedOrders = await DataService.loadAssignedWorkOrders();
+                        setOrders(loadedOrders);
+                    } catch (err) {
+                        setError('Failed to load work orders: ' + err.message);
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+                loadOrders();
+            }, []);
+
+            return (
+                <div className="bg-white p-6 rounded-lg shadow mb-6">
+                    <h3 className="text-xl font-bold mb-4">Assigned Work Orders</h3>
+                    {selectedWorkOrder ? (
+                        <div className="p-4 bg-blue-50 rounded-lg">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <h4 className="font-bold text-blue-900">WO# {selectedWorkOrder['Work Order #'] || selectedWorkOrder['WO#']}</h4>
+                                    <p className="text-blue-700">Client: {selectedWorkOrder.Client}</p>
+                                    <p className="text-blue-700">Address: {selectedWorkOrder.Address || selectedWorkOrder.Company}</p>
+                                    <p className="text-sm text-blue-600">Task: {selectedWorkOrder.Task}</p>
+                                </div>
+                                <button 
+                                    onClick={onClearSelection}
+                                    className="text-blue-600 hover:text-blue-800"
+                                >
+                                    Change Work Order
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="space-y-2">
+                            {loading ? (
+                                <p className="text-gray-500">Loading work orders...</p>
+                            ) : error ? (
+                                <p className="text-red-600">{error}</p>
+                            ) : orders.length === 0 ? (
+                                <p className="text-gray-500">No assigned work orders found. You can still create service reports manually.</p>
+                            ) : (
+                                orders.map(order => (
+                                    <div key={order.id} 
+                                         onClick={() => onSelectWorkOrder(order)}
+                                         className="p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
+                                        <div className="flex justify-between items-center">
+                                            <div>
+                                                <h4 className="font-semibold">WO# {order['Work Order #'] || order['WO#']}</h4>
+                                                <p className="text-sm text-gray-600">{order.Client} - {order.Task}</p>
+                                                <p className="text-xs text-gray-500">Priority: {order.Priority} | Status: {order['Order Status']}</p>
+                                            </div>
+                                            <span className="text-blue-600">Select →</span>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // --- SYNC STATUS COMPONENT ---
+        const SyncStatus = ({ onRetrySync, syncCount }) => {
+            const [pendingCount, setPendingCount] = useState(0);
+            const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+            useEffect(() => {
+                const updatePendingCount = () => {
+                    const pending = JSON.parse(localStorage.getItem('pendingReports') || '[]');
+                    setPendingCount(pending.length);
+                };
+                
+                updatePendingCount();
+                
+                const handleOnlineStatus = () => {
+                    setIsOnline(navigator.onLine);
+                    if (navigator.onLine) {
+                        onRetrySync();
+                    }
+                };
+
+                window.addEventListener('online', handleOnlineStatus);
+                window.addEventListener('offline', handleOnlineStatus);
+                window.addEventListener('storage', updatePendingCount);
+                
+                return () => {
+                    window.removeEventListener('online', handleOnlineStatus);
+                    window.removeEventListener('offline', handleOnlineStatus);
+                    window.removeEventListener('storage', updatePendingCount);
+                };
+            }, [onRetrySync]);
+
+            if (pendingCount === 0 && isOnline) return null;
+
+            return (
+                <div className={`p-4 rounded-lg mb-4 ${isOnline ? 'bg-yellow-50 border border-yellow-200' : 'bg-red-50 border border-red-200'}`}>
+                    <div className="flex justify-between items-center">
+                        <div>
+                            <p className={`font-semibold ${isOnline ? 'text-yellow-800' : 'text-red-800'}`}>
+                                {isOnline ? 'Sync Status' : 'Offline Mode'}
+                            </p>
+                            {pendingCount > 0 && (
+                                <p className={`text-sm ${isOnline ? 'text-yellow-600' : 'text-red-600'}`}>
+                                    {pendingCount} report(s) pending sync
+                                </p>
+                            )}
+                            {syncCount > 0 && (
+                                <p className="text-sm text-green-600">
+                                    Recently synced {syncCount} report(s)
+                                </p>
+                            )}
+                        </div>
+                        {isOnline && pendingCount > 0 && (
+                            <button 
+                                onClick={onRetrySync}
+                                className="px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700"
+                            >
+                                Retry Sync
+                            </button>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- UNIT FORM (Enhanced with work order integration) ---
+        const UnitForm = ({ onAddUnit, selectedWorkOrder }) => {
+            const [unitNumber, setUnitNumber] = useState('');
+            const [unitType, setUnitType] = useState('');
+            const [location, setLocation] = useState('');
+            const [areaServed, setAreaServed] = useState('');
+            const [make, setMake] = useState('');
+            const [modelNumber, setModelNumber] = useState('');
+            const [serialNumber, setSerialNumber] = useState('');
+            const [notes, setNotes] = useState('');
+            const [images, setImages] = useState([]);
+            const [filters, setFilters] = useState([{ size: '', quantity: '' }]);
+            const [belts, setBelts] = useState([{ size: '', quantity: '' }]);
+            const [punchList, setPunchList] = useState(() => punchListItems.reduce((acc, item) => ({...acc, [item]: false }), {}));
+            const [driveType, setDriveType] = useState('belt');
+            const [economizer, setEconomizer] = useState('no');
+            const fileInputRef = useRef(null);
+            const cameraInputRef = useRef(null);
+
+            const handleImageUpload = async (e) => {
+                const files = Array.from(e.target.files);
+                if (files.length === 0) return;
+                const base64Images = await Promise.all(files.map(file => toBase64(file)));
+                setImages(prevImages => [...prevImages, ...base64Images]);
+            };
+
+            const handleFilterChange = (index, event) => {
+                const { name, value } = event.target;
+                const newFilters = [...filters];
+                newFilters[index][name] = value;
+                setFilters(newFilters);
+            };
+
+            const handleBeltChange = (index, event) => {
+                const { name, value } = event.target;
+                const newBelts = [...belts];
+                newBelts[index][name] = value;
+                setBelts(newBelts);
+            };
+
+            const handlePunchListChange = (item) => {
+                setPunchList(prev => ({ ...prev, [item]: !prev[item] }));
+            };
+
+            const handleToggleAllPunchList = () => {
+                const allChecked = punchListItems.every(item => punchList[item]);
+                const newPunchList = {};
+                punchListItems.forEach(item => {
+                    newPunchList[item] = !allChecked;
+                });
+                setPunchList(newPunchList);
+            };
+
+            const addFilterField = () => {
+                setFilters([...filters, { size: '', quantity: '' }]);
+            };
+            
+            const addBeltField = () => {
+                setBelts([...belts, { size: '', quantity: '' }]);
+            };
+
+            const removeFilterField = (index) => {
+                const newFilters = [...filters];
+                newFilters.splice(index, 1);
+                setFilters(newFilters);
+            };
+            
+            const removeBeltField = (index) => {
+                const newBelts = [...belts];
+                newBelts.splice(index, 1);
+                setBelts(newBelts);
+            };
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (!location) {
+                    alert("Please provide a location for the unit.");
+                    return;
+                }
+                const finalFilters = filters.filter(f => f.size && f.quantity);
+                const finalBelts = belts.filter(b => b.size && b.quantity);
+                onAddUnit({ 
+                    id: Date.now(), 
+                    unitNumber, 
+                    unitType, 
+                    location, 
+                    areaServed, 
+                    make, 
+                    modelNumber, 
+                    serialNumber, 
+                    images, 
+                    filters: finalFilters, 
+                    belts: finalBelts, 
+                    driveType, 
+                    economizer: economizer === 'yes', 
+                    notes, 
+                    punchList 
+                });
+                
+                // Reset form
+                setUnitNumber(''); setUnitType(''); setLocation(''); setAreaServed(''); setMake(''); 
+                setModelNumber(''); setSerialNumber(''); setNotes(''); setImages([]); 
+                setFilters([{ size: '', quantity: '' }]); setBelts([{ size: '', quantity: '' }]); 
+                setDriveType('belt'); setEconomizer('no'); 
+                setPunchList(punchListItems.reduce((acc, item) => ({...acc, [item]: false }), {}));
+            };
+            
+            const handleRemoveImage = (index) => {
+                setImages(images.filter((_, i) => i !== index));
+            };
+
+            return (
+                <div className="bg-white p-8 rounded-xl shadow-2xl mb-8 border border-gray-200">
+                    <h2 className="text-2xl font-bold text-gray-800 mb-6">Add New HVAC Unit</h2>
+                    
+                    {selectedWorkOrder && (
+                        <div className="mb-4 p-3 bg-blue-50 rounded-lg">
+                            <p className="text-sm text-blue-700">
+                                Adding unit for Work Order: <strong>{selectedWorkOrder['Work Order #'] || selectedWorkOrder['WO#']}</strong>
+                            </p>
+                            {selectedWorkOrder.servicedAssets && selectedWorkOrder.servicedAssets.length > 0 && (
+                                <div className="mt-2">
+                                    <p className="text-xs text-blue-600">Expected assets:</p>
+                                    <ul className="text-xs text-blue-600 list-disc list-inside ml-2">
+                                        {selectedWorkOrder.servicedAssets.map((asset, index) => (
+                                            <li key={index}>{asset}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <select value={unitNumber} onChange={(e) => setUnitNumber(e.target.value)} className="p-3 border rounded-lg">
+                                <option value="">Select Unit Number</option>
+                                {unitNumbers.map(n => <option key={n} value={n}>{n}</option>)}
+                            </select>
+                            <select value={unitType} onChange={(e) => setUnitType(e.target.value)} className="p-3 border rounded-lg">
+                                <option value="">Select Unit Type</option>
+                                {unitTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                            <select value={location} onChange={(e) => setLocation(e.target.value)} className="p-3 border rounded-lg" required>
+                                <option value="">Select Location</option>
+                                {locations.map(l => <option key={l} value={l}>{l}</option>)}
+                            </select>
+                            <select value={areaServed} onChange={(e) => setAreaServed(e.target.value)} className="p-3 border rounded-lg">
+                                <option value="">Select Area Served</option>
+                                {areasServed.map(a => <option key={a} value={a}>{a}</option>)}
+                            </select>
+                            <select value={make} onChange={(e) => setMake(e.target.value)} className="p-3 border rounded-lg">
+                                <option value="">Select Make</option>
+                                {hvacMakes.map(m => <option key={m} value={m}>{m}</option>)}
+                            </select>
+                            <input type="text" placeholder="Model Number" value={modelNumber} onChange={(e) => setModelNumber(e.target.value)} className="p-3 border rounded-lg" />
+                            <input type="text" placeholder="Serial Number" value={serialNumber} onChange={(e) => setSerialNumber(e.target.value)} className="p-3 border rounded-lg" />
+                        </div>
+                        <textarea placeholder="Notes about the unit..." value={notes} onChange={(e) => setNotes(e.target.value)} className="p-3 border rounded-lg w-full h-28"></textarea>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <select value={driveType} onChange={(e) => setDriveType(e.target.value)} className="p-3 border rounded-lg">
+                                <option value="belt">Belt Drive</option>
+                                <option value="dd">Direct Drive</option>
+                            </select>
+                            <div className="flex items-center space-x-4 p-3">
+                                <label className="font-medium">Economizer:</label>
+                                <label><input type="radio" value="yes" checked={economizer === 'yes'} onChange={(e) => setEconomizer(e.target.value)} className="mr-1"/>Yes</label>
+                                <label><input type="radio" value="no" checked={economizer === 'no'} onChange={(e) => setEconomizer(e.target.value)} className="mr-1"/>No</label>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Filters</label>
+                            {filters.map((filter, index) => (
+                                <div key={index} className="flex items-center space-x-2 mb-2">
+                                    <input list="filter-sizes" name="size" value={filter.size} onChange={e => handleFilterChange(index, e)} placeholder="Filter Size (e.g., 20x20x1)" className="p-3 border rounded-lg w-full md:w-1/2" />
+                                    <input type="number" name="quantity" value={filter.quantity} onChange={e => handleFilterChange(index, e)} placeholder="Qty" className="p-3 border rounded-lg w-full md:w-1/4" />
+                                    <button type="button" onClick={() => removeFilterField(index)} className="px-3 py-2 bg-red-200 text-red-800 rounded-lg hover:bg-red-300">-</button>
+                                </div>
+                            ))}
+                            <datalist id="filter-sizes">{filterSizes.map(s => <option key={s} value={s}/>)}</datalist>
+                            <button type="button" onClick={addFilterField} className="mt-1 text-sm text-blue-600 hover:underline">+ Add another filter size</button>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Belts</label>
+                            {belts.map((belt, index) => (
+                                <div key={index} className="flex items-center space-x-2 mb-2">
+                                    <input list="belt-sizes" name="size" value={belt.size} onChange={e => handleBeltChange(index, e)} placeholder="Belt Size (e.g., AX-34)" className="p-3 border rounded-lg w-full md:w-1/2" />
+                                    <input type="number" name="quantity" value={belt.quantity} onChange={e => handleBeltChange(index, e)} placeholder="Qty" className="p-3 border rounded-lg w-full md:w-1/4" />
+                                    <button type="button" onClick={() => removeBeltField(index)} className="px-3 py-2 bg-red-200 text-red-800 rounded-lg hover:bg-red-300">-</button>
+                                </div>
+                            ))}
+                            <datalist id="belt-sizes">{beltSizes.map(s => <option key={s} value={s}/>)}</datalist>
+                            <button type="button" onClick={addBeltField} className="mt-1 text-sm text-blue-600 hover:underline">+ Add another belt size</button>
+                        </div>
+                        <div>
+                            <div className="flex justify-between items-center mb-2">
+                                <label className="block text-lg font-medium text-gray-700">Punch List</label>
+                                <button type="button" onClick={handleToggleAllPunchList} className="text-sm text-blue-600 hover:underline">
+                                    {punchListItems.every(item => punchList[item]) ? 'Uncheck All' : 'Check All'}
+                                </button>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+                                {punchListItems.map((item, index) => (
+                                    <label key={index} className="flex items-center space-x-3">
+                                        <input type="checkbox" checked={punchList[item]} onChange={() => handlePunchListChange(item)} className="h-4 w-4"/>
+                                        <span className="text-gray-700">{item}</span>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <button type="button" onClick={() => fileInputRef.current.click()} className="w-full px-4 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition">Upload Pictures</button>
+                            <button type="button" onClick={() => cameraInputRef.current.click()} className="w-full px-4 py-3 bg-blue-200 text-blue-800 rounded-lg hover:bg-blue-300 transition">Open Camera</button>
+                            <input type="file" multiple accept="image/*" ref={fileInputRef} className="hidden" onChange={handleImageUpload} />
+                            <input type="file" accept="image/*" capture="environment" ref={cameraInputRef} className="hidden" onChange={handleImageUpload} />
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                            {images.map((image, index) => (
+                                <div key={index} className="relative">
+                                    <img src={image} alt={`upload-preview ${index}`} className="rounded-md object-cover w-full h-32" />
+                                    <button type="button" onClick={() => handleRemoveImage(index)} className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 text-xs leading-none">&times;</button>
+                                </div>
+                            ))}
+                        </div>
+                        <button type="submit" className="w-full py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700">Add Unit</button>
+                    </form>
+                </div>
+            );
+        };
+
+        // --- UNIT CARD (Kept from original with small enhancements) ---
         const UnitCard = ({ unit, onUpdate, onDelete, onGeneratePdf }) => {
             const [isEditing, setIsEditing] = useState(false);
             const [editedUnit, setEditedUnit] = useState(unit);
             const fileInputRef = useRef(null);
             const cameraInputRef = useRef(null);
 
+            // ... (keeping all the original UnitCard functionality)
             const handleImageUpload = async (e) => {
                 const files = Array.from(e.target.files);
                 if (files.length === 0) return;
@@ -255,162 +834,7 @@
             );
         };
 
-        // UnitForm Component
-        const UnitForm = ({ onAddUnit }) => {
-            const [unitNumber, setUnitNumber] = useState('');
-            const [unitType, setUnitType] = useState('');
-            const [location, setLocation] = useState('');
-            const [areaServed, setAreaServed] = useState('');
-            const [make, setMake] = useState('');
-            const [modelNumber, setModelNumber] = useState('');
-            const [serialNumber, setSerialNumber] = useState('');
-            const [notes, setNotes] = useState('');
-            const [images, setImages] = useState([]);
-            const [filters, setFilters] = useState([{ size: '', quantity: '' }]);
-            const [belts, setBelts] = useState([{ size: '', quantity: '' }]);
-            const [punchList, setPunchList] = useState(() => punchListItems.reduce((acc, item) => ({...acc, [item]: false }), {}));
-            const [driveType, setDriveType] = useState('belt');
-            const [economizer, setEconomizer] = useState('no');
-            const fileInputRef = useRef(null);
-            const cameraInputRef = useRef(null);
-
-            const handleImageUpload = async (e) => {
-                const files = Array.from(e.target.files);
-                if (files.length === 0) return;
-                const base64Images = await Promise.all(files.map(file => toBase64(file)));
-                setImages(prevImages => [...prevImages, ...base64Images]);
-            };
-
-            const handleFilterChange = (index, event) => {
-                const { name, value } = event.target;
-                const newFilters = [...filters];
-                newFilters[index][name] = value;
-                setFilters(newFilters);
-            };
-
-            const handleBeltChange = (index, event) => {
-                const { name, value } = event.target;
-                const newBelts = [...belts];
-                newBelts[index][name] = value;
-                setBelts(newBelts);
-            };
-
-            const handlePunchListChange = (item) => {
-                setPunchList(prev => ({ ...prev, [item]: !prev[item] }));
-            };
-
-            const handleToggleAllPunchList = () => {
-                const allChecked = punchListItems.every(item => punchList[item]);
-                const newPunchList = {};
-                punchListItems.forEach(item => {
-                    newPunchList[item] = !allChecked;
-                });
-                setPunchList(newPunchList);
-            };
-
-            const addFilterField = () => {
-                setFilters([...filters, { size: '', quantity: '' }]);
-            };
-            
-            const addBeltField = () => {
-                setBelts([...belts, { size: '', quantity: '' }]);
-            };
-
-            const removeFilterField = (index) => {
-                const newFilters = [...filters];
-                newFilters.splice(index, 1);
-                setFilters(newFilters);
-            };
-            
-            const removeBeltField = (index) => {
-                const newBelts = [...belts];
-                newBelts.splice(index, 1);
-                setBelts(newBelts);
-            };
-
-            const handleSubmit = (e) => {
-                e.preventDefault();
-                if (!location) {
-                    alert("Please provide a location for the unit.");
-                    return;
-                }
-                const finalFilters = filters.filter(f => f.size && f.quantity);
-                const finalBelts = belts.filter(b => b.size && b.quantity);
-                onAddUnit({ id: Date.now(), unitNumber, unitType, location, areaServed, make, modelNumber, serialNumber, images, filters: finalFilters, belts: finalBelts, driveType, economizer: economizer === 'yes', notes, punchList });
-                setUnitNumber(''); setUnitType(''); setLocation(''); setAreaServed(''); setMake(''); setModelNumber(''); setSerialNumber(''); setNotes(''); setImages([]); setFilters([{ size: '', quantity: '' }]); setBelts([{ size: '', quantity: '' }]); setDriveType('belt'); setEconomizer('no'); setPunchList(punchListItems.reduce((acc, item) => ({...acc, [item]: false }), {}));
-            };
-            
-            const handleRemoveImage = (index) => {
-                setImages(images.filter((_, i) => i !== index));
-            };
-
-            return (
-                <div className="bg-white p-8 rounded-xl shadow-2xl mb-8 border border-gray-200">
-                    <h2 className="text-2xl font-bold text-gray-800 mb-6">Add New HVAC Unit</h2>
-                    <form onSubmit={handleSubmit} className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <select value={unitNumber} onChange={(e) => setUnitNumber(e.target.value)} className="p-3 border rounded-lg"><option value="">Select Unit Number</option>{unitNumbers.map(n => <option key={n} value={n}>{n}</option>)}</select>
-                            <select value={unitType} onChange={(e) => setUnitType(e.target.value)} className="p-3 border rounded-lg"><option value="">Select Unit Type</option>{unitTypes.map(t => <option key={t} value={t}>{t}</option>)}</select>
-                            <select value={location} onChange={(e) => setLocation(e.target.value)} className="p-3 border rounded-lg" required><option value="">Select Location</option>{locations.map(l => <option key={l} value={l}>{l}</option>)}</select>
-                            <select value={areaServed} onChange={(e) => setAreaServed(e.target.value)} className="p-3 border rounded-lg"><option value="">Select Area Served</option>{areasServed.map(a => <option key={a} value={a}>{a}</option>)}</select>
-                            <select value={make} onChange={(e) => setMake(e.target.value)} className="p-3 border rounded-lg"><option value="">Select Make</option>{hvacMakes.map(m => <option key={m} value={m}>{m}</option>)}</select>
-                            <input type="text" placeholder="Model Number" value={modelNumber} onChange={(e) => setModelNumber(e.target.value)} className="p-3 border rounded-lg" />
-                            <input type="text" placeholder="Serial Number" value={serialNumber} onChange={(e) => setSerialNumber(e.target.value)} className="p-3 border rounded-lg" />
-                        </div>
-                         <textarea placeholder="Notes about the unit..." value={notes} onChange={(e) => setNotes(e.target.value)} className="p-3 border rounded-lg w-full h-28"></textarea>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <select value={driveType} onChange={(e) => setDriveType(e.target.value)} className="p-3 border rounded-lg"><option value="belt">Belt Drive</option><option value="dd">Direct Drive</option></select>
-                            <div className="flex items-center space-x-4 p-3"><label className="font-medium">Economizer:</label><label><input type="radio" value="yes" checked={economizer === 'yes'} onChange={(e) => setEconomizer(e.target.value)} className="mr-1"/>Yes</label><label><input type="radio" value="no" checked={economizer === 'no'} onChange={(e) => setEconomizer(e.target.value)} className="mr-1"/>No</label></div>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Filters</label>
-                            {filters.map((filter, index) => (
-                                <div key={index} className="flex items-center space-x-2 mb-2">
-                                    <input list="filter-sizes" name="size" value={filter.size} onChange={e => handleFilterChange(index, e)} placeholder="Filter Size (e.g., 20x20x1)" className="p-3 border rounded-lg w-full md:w-1/2" />
-                                    <input type="number" name="quantity" value={filter.quantity} onChange={e => handleFilterChange(index, e)} placeholder="Qty" className="p-3 border rounded-lg w-full md:w-1/4" />
-                                    <button type="button" onClick={() => removeFilterField(index)} className="px-3 py-2 bg-red-200 text-red-800 rounded-lg hover:bg-red-300">-</button>
-                                </div>
-                            ))}
-                            <datalist id="filter-sizes">{filterSizes.map(s => <option key={s} value={s}/>)}</datalist>
-                            <button type="button" onClick={addFilterField} className="mt-1 text-sm text-blue-600 hover:underline">+ Add another filter size</button>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Belts</label>
-                            {belts.map((belt, index) => (
-                                <div key={index} className="flex items-center space-x-2 mb-2">
-                                    <input list="belt-sizes" name="size" value={belt.size} onChange={e => handleBeltChange(index, e)} placeholder="Belt Size (e.g., AX-34)" className="p-3 border rounded-lg w-full md:w-1/2" />
-                                    <input type="number" name="quantity" value={belt.quantity} onChange={e => handleBeltChange(index, e)} placeholder="Qty" className="p-3 border rounded-lg w-full md:w-1/4" />
-                                    <button type="button" onClick={() => removeBeltField(index)} className="px-3 py-2 bg-red-200 text-red-800 rounded-lg hover:bg-red-300">-</button>
-                                </div>
-                            ))}
-                            <datalist id="belt-sizes">{beltSizes.map(s => <option key={s} value={s}/>)}</datalist>
-                            <button type="button" onClick={addBeltField} className="mt-1 text-sm text-blue-600 hover:underline">+ Add another belt size</button>
-                        </div>
-                         <div>
-                            <div className="flex justify-between items-center mb-2">
-                                <label className="block text-lg font-medium text-gray-700">Punch List</label>
-                                <button type="button" onClick={handleToggleAllPunchList} className="text-sm text-blue-600 hover:underline">
-                                    {punchListItems.every(item => punchList[item]) ? 'Uncheck All' : 'Check All'}
-                                </button>
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
-                                {punchListItems.map((item, index) => (
-                                    <label key={index} className="flex items-center space-x-3">
-                                        <input type="checkbox" checked={punchList[item]} onChange={() => handlePunchListChange(item)} className="h-4 w-4"/>
-                                        <span className="text-gray-700">{item}</span>
-                                    </label>
-                                ))}
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => fileInputRef.current.click()} className="w-full px-4 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition">Upload Pictures</button><button type="button" onClick={() => cameraInputRef.current.click()} className="w-full px-4 py-3 bg-blue-200 text-blue-800 rounded-lg hover:bg-blue-300 transition">Open Camera</button><input type="file" multiple accept="image/*" ref={fileInputRef} className="hidden" onChange={handleImageUpload} /><input type="file" accept="image/*" capture="environment" ref={cameraInputRef} className="hidden" onChange={handleImageUpload} /></div>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">{images.map((image, index) => (<div key={index} className="relative"><img src={image} alt={`upload-preview ${index}`} className="rounded-md object-cover w-full h-32" /><button type="button" onClick={() => handleRemoveImage(index)} className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 text-xs leading-none">&times;</button></div>))}</div>
-                        <button type="submit" className="w-full py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700">Add Unit</button>
-                    </form>
-                </div>
-            );
-        };
-
-        // ServiceReport Component - Now with enhanced styling for a professional look
+        // --- SERVICE REPORT (Kept from original) ---
         const ServiceReport = ({ units, clientInfo }) => {
             return (
                 <div id="service-report" className="p-8 bg-white font-sans" style={{width: '210mm'}}>
@@ -472,18 +896,45 @@
             );
         };
 
-        // Main App Component
+        // --- MAIN APP (Enhanced with integration features) ---
         function App() {
+            const [user, setUser] = useState(null);
             const [units, setUnits] = useState([]);
+            const [selectedWorkOrder, setSelectedWorkOrder] = useState(null);
             const [clientInfo, setClientInfo] = useState({ name: '', address: '', workOrderNumber: '' });
             const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
             const [showAbout, setShowAbout] = useState(false);
-            const [pdfData, setPdfData] = useState(null); // Used to trigger PDF generation
+            const [pdfData, setPdfData] = useState(null);
+            const [syncCount, setSyncCount] = useState(0);
 
+            // Auto-populate client info when work order is selected
+            useEffect(() => {
+                if (selectedWorkOrder) {
+                    setClientInfo({
+                        name: selectedWorkOrder.Client || '',
+                        address: selectedWorkOrder.Address || selectedWorkOrder.Company || '',
+                        workOrderNumber: selectedWorkOrder['Work Order #'] || selectedWorkOrder['WO#'] || ''
+                    });
+                }
+            }, [selectedWorkOrder]);
+
+            // Check for existing login on app start
+            useEffect(() => {
+                const savedTech = localStorage.getItem('currentTechnician');
+                if (savedTech) {
+                    try {
+                        const techData = JSON.parse(savedTech);
+                        setUser(techData);
+                    } catch (error) {
+                        localStorage.removeItem('currentTechnician');
+                    }
+                }
+            }, []);
+
+            // PDF generation effect (kept from original)
             useEffect(() => {
                 if (pdfData) {
                     setIsGeneratingPdf(true);
-                    // Timeout allows the DOM to update with the new pdfData before capturing
                     setTimeout(() => {
                         const input = document.getElementById('service-report');
                         const { jsPDF } = window.jspdf;
@@ -510,7 +961,7 @@
                             const fileName = pdfData.units.length > 1 ? 'HVAC-Service-Report.pdf' : `HVAC-Report-Unit-${pdfData.units[0].unitNumber || pdfData.units[0].id}.pdf`;
                             pdf.save(fileName);
                             setIsGeneratingPdf(false);
-                            setPdfData(null); // Reset pdfData
+                            setPdfData(null);
                         }).catch(err => {
                             console.error("Error generating PDF", err);
                             setIsGeneratingPdf(false);
@@ -535,25 +986,156 @@
             const handleClientInfoChange = (e) => {
                 const { name, value } = e.target;
                 setClientInfo(prev => ({...prev, [name]: value}));
-            }
+            };
 
             const generateSingleUnitPdf = (unit) => {
                 setPdfData({ clientInfo, units: [unit] });
             };
 
-            const generateFullReportPdf = () => {
-                setPdfData({ clientInfo, units });
+            const handleGenerateReport = async () => {
+                if (units.length === 0) {
+                    alert('Please add at least one unit before generating a report.');
+                    return;
+                }
+
+                setIsGeneratingPdf(true);
+                try {
+                    // Sync to business system
+                    await DataService.syncServiceReport(
+                        units, 
+                        clientInfo, 
+                        selectedWorkOrder?.id
+                    );
+                    
+                    alert('Service report synced successfully!');
+                    
+                    // Generate PDF
+                    setPdfData({ clientInfo, units });
+                    
+                } catch (error) {
+                    console.error('Sync failed:', error);
+                    alert('Sync failed - saved for retry when back online. PDF will still generate.');
+                    // Still generate PDF even if sync fails
+                    setPdfData({ clientInfo, units });
+                } finally {
+                    // PDF generation will set isGeneratingPdf to false
+                }
             };
+
+            const retryPendingSync = async () => {
+                try {
+                    const syncedCount = await DataService.retryPendingSync();
+                    if (syncedCount > 0) {
+                        setSyncCount(syncedCount);
+                        setTimeout(() => setSyncCount(0), 5000); // Clear after 5 seconds
+                    }
+                } catch (error) {
+                    console.error('Retry sync failed:', error);
+                }
+            };
+
+            const handleLogout = () => {
+                if (auth) {
+                    auth.signOut();
+                }
+                localStorage.removeItem('currentTechnician');
+                setUser(null);
+                setUnits([]);
+                setSelectedWorkOrder(null);
+                setClientInfo({ name: '', address: '', workOrderNumber: '' });
+            };
+
+            if (!user) {
+                return <LoginForm onLogin={setUser} />;
+            }
 
             return (
                 <div className="container mx-auto p-4 sm:p-6 lg:p-8">
-                    <header className="text-center mb-10"><h1 className="text-4xl sm:text-5xl font-extrabold text-gray-800">HVAC Service Reporter</h1><p className="text-lg text-gray-600 mt-2">Easily document unit maintenance and generate PDF reports.</p></header>
-                    <div className="bg-white p-6 rounded-xl shadow-lg mb-8 border border-gray-200"><button onClick={() => setShowAbout(!showAbout)} className="text-xl font-bold text-gray-800 w-full text-left flex justify-between items-center"><span>About This App</span><span className="transform transition-transform">{showAbout ? '▲' : '▼'}</span></button>{showAbout && (<div className="mt-4 space-y-2 text-gray-700"><p>This application helps HVAC technicians create detailed service reports directly in the field. All data is stored in your browser, and nothing is uploaded to a server.</p><h4 className="font-semibold pt-2">How to Use:</h4><ol className="list-decimal list-inside space-y-1"><li><strong>Client Information:</strong> Fill in the client's name, address, and work order number.</li><li><strong>Add Units:</strong> Use the "Add New HVAC Unit" form to enter details for each unit you service. You can add multiple filters, belts, photos, and notes for each one.</li><li><strong>Complete the Punch List:</strong> Check off each task as you complete it for the unit.</li><li><strong>Manage Units:</strong> After adding a unit, you can edit or delete it from the list.</li><li><strong>Generate Report:</strong> Once all units are documented, click the "Generate Full Service Report (PDF)" button to create and download a professional PDF report.</li></ol></div>)}</div>
-                    <div className="bg-white p-8 rounded-xl shadow-2xl mb-8 border border-gray-200"><h2 className="text-2xl font-bold text-gray-800 mb-6">Client Information</h2><div className="grid grid-cols-1 md:grid-cols-2 gap-4"><input type="text" name="name" placeholder="Client Name" value={clientInfo.name} onChange={handleClientInfoChange} className="p-3 border rounded-lg" /><input type="text" name="address" placeholder="Client Address" value={clientInfo.address} onChange={handleClientInfoChange} className="p-3 border rounded-lg" /><input type="text" name="workOrderNumber" placeholder="Work Order #" value={clientInfo.workOrderNumber} onChange={handleClientInfoChange} className="p-3 border rounded-lg md:col-span-2" /></div></div>
-                    <UnitForm onAddUnit={addUnit} />
-                    <div className="my-10"><h2 className="text-3xl font-bold text-gray-800 mb-6 border-b-2 pb-2">Service Units</h2>{units.length === 0 ? (<p className="text-center text-gray-500">No units added yet. Use the form above to add one.</p>) : (units.map(unit => (<UnitCard key={unit.id} unit={unit} onUpdate={updateUnit} onDelete={deleteUnit} onGeneratePdf={generateSingleUnitPdf} />)))}</div>
-                    {units.length > 0 && (<div className="text-center my-10"><button onClick={generateFullReportPdf} disabled={isGeneratingPdf} className="bg-green-600 text-white font-bold py-4 px-8 rounded-lg shadow-lg hover:bg-green-700 transition-all transform hover:scale-105 disabled:bg-gray-400">{isGeneratingPdf ? 'Generating PDF...' : 'Generate Full Service Report (PDF)'}</button></div>)}
-                    <div className="absolute -left-full -top-full opacity-0"><ServiceReport units={pdfData ? pdfData.units : []} clientInfo={pdfData ? pdfData.clientInfo : clientInfo} /></div>
+                    <header className="flex justify-between items-center mb-8">
+                        <div>
+                            <h1 className="text-4xl font-extrabold text-gray-800">HVAC Service Reporter</h1>
+                            <p className="text-gray-600">Welcome, {user.name}</p>
+                        </div>
+                        <button 
+                            onClick={handleLogout}
+                            className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+                        >
+                            Logout
+                        </button>
+                    </header>
+
+                    <SyncStatus onRetrySync={retryPendingSync} syncCount={syncCount} />
+                    
+                    <WorkOrderSelector 
+                        selectedWorkOrder={selectedWorkOrder}
+                        onSelectWorkOrder={setSelectedWorkOrder}
+                        onClearSelection={() => setSelectedWorkOrder(null)}
+                    />
+
+                    <div className="bg-white p-6 rounded-xl shadow-lg mb-8 border border-gray-200">
+                        <button onClick={() => setShowAbout(!showAbout)} className="text-xl font-bold text-gray-800 w-full text-left flex justify-between items-center">
+                            <span>About This App</span>
+                            <span className="transform transition-transform">{showAbout ? '▲' : '▼'}</span>
+                        </button>
+                        {showAbout && (
+                            <div className="mt-4 space-y-2 text-gray-700">
+                                <p>This application helps HVAC technicians create detailed service reports directly in the field and sync them with your business management system.</p>
+                                <h4 className="font-semibold pt-2">New Features:</h4>
+                                <ul className="list-disc list-inside space-y-1">
+                                    <li><strong>Work Order Integration:</strong> Select assigned work orders to auto-populate client information</li>
+                                    <li><strong>Automatic Syncing:</strong> Service reports automatically sync to your business system</li>
+                                    <li><strong>Offline Support:</strong> Work offline and sync when connection is restored</li>
+                                    <li><strong>Technician Login:</strong> Secure access with your technician credentials</li>
+                                </ul>
+                            </div>
+                        )}
+                    </div>
+                    
+                    {!selectedWorkOrder && (
+                        <div className="bg-white p-8 rounded-xl shadow-2xl mb-8 border border-gray-200">
+                            <h2 className="text-2xl font-bold text-gray-800 mb-6">Manual Service Report</h2>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <input type="text" name="name" placeholder="Client Name" value={clientInfo.name} onChange={handleClientInfoChange} className="p-3 border rounded-lg" />
+                                <input type="text" name="address" placeholder="Client Address" value={clientInfo.address} onChange={handleClientInfoChange} className="p-3 border rounded-lg" />
+                                <input type="text" name="workOrderNumber" placeholder="Work Order #" value={clientInfo.workOrderNumber} onChange={handleClientInfoChange} className="p-3 border rounded-lg md:col-span-2" />
+                            </div>
+                        </div>
+                    )}
+
+                    <UnitForm onAddUnit={addUnit} selectedWorkOrder={selectedWorkOrder} />
+                    
+                    <div className="my-10">
+                        <h2 className="text-3xl font-bold text-gray-800 mb-6 border-b-2 pb-2">Service Units</h2>
+                        {units.length === 0 ? (
+                            <p className="text-center text-gray-500">No units added yet. Use the form above to add one.</p>
+                        ) : (
+                            units.map(unit => (
+                                <UnitCard 
+                                    key={unit.id} 
+                                    unit={unit} 
+                                    onUpdate={updateUnit} 
+                                    onDelete={deleteUnit} 
+                                    onGeneratePdf={generateSingleUnitPdf} 
+                                />
+                            ))
+                        )}
+                    </div>
+                    
+                    {units.length > 0 && (
+                        <div className="text-center my-10">
+                            <button 
+                                onClick={handleGenerateReport}
+                                disabled={isGeneratingPdf}
+                                className="bg-green-600 text-white font-bold py-4 px-8 rounded-lg shadow-lg hover:bg-green-700 transition-all transform hover:scale-105 disabled:bg-gray-400"
+                            >
+                                {isGeneratingPdf ? 'Generating & Syncing...' : 'Generate Service Report & Sync'}
+                            </button>
+                        </div>
+                    )}
+                    
+                    <div className="absolute -left-full -top-full opacity-0">
+                        <ServiceReport units={pdfData ? pdfData.units : []} clientInfo={pdfData ? pdfData.clientInfo : clientInfo} />
+                    </div>
                 </div>
             );
         }
