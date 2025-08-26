@@ -46,10 +46,10 @@
             console.error('Firebase initialization failed:', error);
         }
 
-        // Company ID - REPLACE WITH YOUR FIREBASE AUTH UID
+        // Company ID - YOUR FIREBASE AUTH UID
         const COMPANY_ID = 'ClSV1kqfqugwDiP9Vg6IYex96kk1';
 
-        // --- PREDEFINED OPTIONS (kept from original) ---
+        // --- PREDEFINED OPTIONS ---
         const hvacMakes = ["Carrier", "Goodman", "Trane", "Lennox", "York", "Rheem", "Ruud", "Amana", "Bryant", "Heil", "Payne", "Daikin", "Other"];
         const unitTypes = ["Rooftop Unit (RTU)", "Air Handling Unit (AHU)", "Split System", "Furnace", "Boiler", "Heat Pump", "Ductless Mini-Split", "EF Exhaust Fan", "VAV Variable Air Volume", "Other"];
         const locations = ["Rooftop", "Basement", "Mechanical Room", "Closet", "Attic", "Exterior Wall", "Crawlspace", "Other"];
@@ -76,19 +76,28 @@
         const DataService = {
             getCurrentTechnician: () => {
                 try {
-                    return JSON.parse(localStorage.getItem('currentTechnician') || '{}');
+                    const techData = JSON.parse(localStorage.getItem('currentTechnician') || '{}');
+                    if (!techData.id) {
+                        throw new Error('No technician data found');
+                    }
+                    return techData;
                 } catch {
-                    return {};
+                    throw new Error('Invalid technician data');
                 }
             },
             
             loadAssignedWorkOrders: async () => {
+                if (!db) throw new Error('Firebase not initialized');
+                if (!COMPANY_ID) throw new Error('Company ID not configured');
+                
                 try {
-                    if (!db) return [];
                     const tech = DataService.getCurrentTechnician();
-                    if (!tech.id || !COMPANY_ID || COMPANY_ID === 'your-company-id') return [];
                     
-                    const snapshot = await db.collection('users').doc(COMPANY_ID).collection('workOrders')
+                    const snapshot = await db.collection('artifacts')
+                        .doc('workOrderManagement')
+                        .collection('users')
+                        .doc(COMPANY_ID)
+                        .collection('workOrders')
                         .where('technician', 'array-contains', tech.id)
                         .where('Order Status', 'in', ['Open', 'Scheduled', 'In Progress'])
                         .get();
@@ -100,37 +109,49 @@
                     return workOrders;
                 } catch (error) {
                     console.error('Error loading work orders:', error);
-                    return [];
+                    throw new Error('Failed to load work orders: ' + error.message);
                 }
             },
 
             syncServiceReport: async (units, clientInfo, workOrderId = null) => {
+                if (!db) throw new Error('Firebase not initialized');
+                if (!COMPANY_ID) throw new Error('Company ID not configured');
+                
                 try {
-                    if (!db) throw new Error('Firebase not initialized');
                     const tech = DataService.getCurrentTechnician();
-                    if (!tech.id || !COMPANY_ID || COMPANY_ID === 'your-company-id') {
-                        throw new Error('No valid technician or company ID');
-                    }
                     
                     const reportData = {
                         technicianId: tech.id,
                         technicianName: tech.name,
+                        technicianEmail: tech.email,
                         clientInfo,
                         units,
                         completedAt: new Date().toISOString(),
+                        startTime: new Date().toISOString(),
                         workOrderId,
                         status: 'completed'
                     };
                     
-                    const reportRef = await db.collection('users').doc(COMPANY_ID).collection('serviceReports').add(reportData);
+                    const reportRef = await db.collection('artifacts')
+                        .doc('workOrderManagement')
+                        .collection('users')
+                        .doc(COMPANY_ID)
+                        .collection('serviceReports')
+                        .add(reportData);
                     
                     if (workOrderId) {
-                        await db.collection('users').doc(COMPANY_ID).collection('workOrders').doc(workOrderId).update({
-                            'Order Status': 'Completed',
-                            'Completion Date': new Date().toISOString(),
-                            serviceReportId: reportRef.id,
-                            lastUpdated: new Date().toISOString()
-                        });
+                        await db.collection('artifacts')
+                            .doc('workOrderManagement')
+                            .collection('users')
+                            .doc(COMPANY_ID)
+                            .collection('workOrders')
+                            .doc(workOrderId)
+                            .update({
+                                'Order Status': 'Completed',
+                                'Completion Date': new Date().toISOString(),
+                                serviceReportId: reportRef.id,
+                                lastUpdated: new Date().toISOString()
+                            });
                     }
                     
                     return reportRef.id;
@@ -140,7 +161,7 @@
                     const pendingReports = JSON.parse(localStorage.getItem('pendingReports') || '[]');
                     pendingReports.push({ units, clientInfo, workOrderId, timestamp: Date.now() });
                     localStorage.setItem('pendingReports', JSON.stringify(pendingReports));
-                    throw error;
+                    throw new Error('Sync failed: ' + error.message);
                 }
             },
 
@@ -188,6 +209,11 @@
                     return;
                 }
                 
+                if (!COMPANY_ID) {
+                    setError('Company ID not configured. Contact your administrator.');
+                    return;
+                }
+                
                 setLoading(true);
                 setError('');
                 
@@ -195,12 +221,27 @@
                     const userCredential = await auth.signInWithEmailAndPassword(email, password);
                     const user = userCredential.user;
                     
-                    if (!COMPANY_ID || COMPANY_ID === 'your-company-id') {
-                        throw new Error('Company ID not configured');
+                    // Check if user is the company owner (management access)
+                    if (user.uid === COMPANY_ID) {
+                        localStorage.setItem('currentTechnician', JSON.stringify({
+                            id: user.uid,
+                            name: 'Management',
+                            email: user.email,
+                            companyId: COMPANY_ID,
+                            isOwner: true
+                        }));
+                        onLogin({ name: 'Management', email: user.email, isOwner: true });
+                        return;
                     }
                     
-                    // Check if user is a technician (v8 syntax)
-                    const techDoc = await db.collection('users').doc(COMPANY_ID).collection('technicians').doc(user.uid).get();
+                    // Check if user is a technician
+                    const techDoc = await db.collection('artifacts')
+                        .doc('workOrderManagement')
+                        .collection('users')
+                        .doc(COMPANY_ID)
+                        .collection('technicians')
+                        .doc(user.uid)
+                        .get();
                     
                     if (techDoc.exists) {
                         const techData = techDoc.data();
@@ -208,7 +249,8 @@
                             id: user.uid,
                             name: techData.name,
                             email: techData.email,
-                            companyId: COMPANY_ID
+                            companyId: COMPANY_ID,
+                            isOwner: false
                         }));
                         onLogin(techData);
                     } else {
@@ -254,14 +296,6 @@
                                 {loading ? 'Signing in...' : 'Sign In'}
                             </button>
                         </form>
-                        <div className="text-center">
-                            <button
-                                onClick={() => onLogin({ name: 'Demo User', email: 'demo@example.com' })}
-                                className="text-blue-600 hover:text-blue-800 text-sm"
-                            >
-                                Continue without login (Demo Mode)
-                            </button>
-                        </div>
                     </div>
                 </div>
             );
@@ -403,7 +437,7 @@
             );
         };
 
-        // --- UNIT FORM (Enhanced with work order integration) ---
+        // --- UNIT FORM ---
         const UnitForm = ({ onAddUnit, selectedWorkOrder }) => {
             const [unitNumber, setUnitNumber] = useState('');
             const [unitType, setUnitType] = useState('');
@@ -633,14 +667,13 @@
             );
         };
 
-        // --- UNIT CARD (Kept from original with small enhancements) ---
+        // --- UNIT CARD (Original functionality maintained) ---
         const UnitCard = ({ unit, onUpdate, onDelete, onGeneratePdf }) => {
             const [isEditing, setIsEditing] = useState(false);
             const [editedUnit, setEditedUnit] = useState(unit);
             const fileInputRef = useRef(null);
             const cameraInputRef = useRef(null);
 
-            // ... (keeping all the original UnitCard functionality)
             const handleImageUpload = async (e) => {
                 const files = Array.from(e.target.files);
                 if (files.length === 0) return;
@@ -835,7 +868,7 @@
             );
         };
 
-        // --- SERVICE REPORT (Kept from original) ---
+        // --- SERVICE REPORT ---
         const ServiceReport = ({ units, clientInfo }) => {
             return (
                 <div id="service-report" className="p-8 bg-white font-sans" style={{width: '210mm'}}>
@@ -897,7 +930,7 @@
             );
         };
 
-        // --- MAIN APP (Enhanced with integration features) ---
+        // --- MAIN APP ---
         function App() {
             const [user, setUser] = useState(null);
             const [units, setUnits] = useState([]);
@@ -932,7 +965,7 @@
                 }
             }, []);
 
-            // PDF generation effect (kept from original)
+            // PDF generation effect
             useEffect(() => {
                 if (pdfData) {
                     setIsGeneratingPdf(true);
@@ -1056,6 +1089,7 @@
                         <div>
                             <h1 className="text-4xl font-extrabold text-gray-800">HVAC Service Reporter</h1>
                             <p className="text-gray-600">Welcome, {user.name}</p>
+                            {user.isOwner && <p className="text-sm text-blue-600">Management Access</p>}
                         </div>
                         <button 
                             onClick={handleLogout}
@@ -1081,12 +1115,14 @@
                         {showAbout && (
                             <div className="mt-4 space-y-2 text-gray-700">
                                 <p>This application helps HVAC technicians create detailed service reports directly in the field and sync them with your business management system.</p>
-                                <h4 className="font-semibold pt-2">New Features:</h4>
+                                <h4 className="font-semibold pt-2">Features:</h4>
                                 <ul className="list-disc list-inside space-y-1">
                                     <li><strong>Work Order Integration:</strong> Select assigned work orders to auto-populate client information</li>
                                     <li><strong>Automatic Syncing:</strong> Service reports automatically sync to your business system</li>
                                     <li><strong>Offline Support:</strong> Work offline and sync when connection is restored</li>
-                                    <li><strong>Technician Login:</strong> Secure access with your technician credentials</li>
+                                    <li><strong>Secure Access:</strong> Login with your technician credentials for secure access</li>
+                                    <li><strong>Professional PDF Reports:</strong> Generate detailed service reports with photos</li>
+                                    <li><strong>Management Access:</strong> Business owners can access all features</li>
                                 </ul>
                             </div>
                         )}
